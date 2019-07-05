@@ -7,88 +7,207 @@
 * This processor was made for computer organization class at ITESO.
 ******************************************************************/
 
-
 module MIPS_Processor
 #(
-	parameter MEMORY_DEPTH = 32
+	parameter MEMORY_DEPTH = 64
 )
 
 (
-	// Inputs
 	input clk,
 	input reset,
 	input [7:0] PortIn,
-	// Output
+
 	output [31:0] ALUResultOut,
 	output [31:0] PortOut
 );
-//******************************************************************/
-//******************************************************************/
+
 assign  PortOut = 0;
 
 //******************************************************************/
 //******************************************************************/
 // Data types to connect modules
-wire BranchNE_wire;
-wire BranchEQ_wire;
-wire RegDst_wire;
-wire NotZeroANDBrachNE;
-wire ZeroANDBrachEQ;
-wire ORForBranch;
-wire ALUSrc_wire;
-wire RegWrite_wire;
-wire Zero_wire;
-wire [2:0] ALUOp_wire;
-wire [3:0] ALUOperation_wire;
-wire [4:0] WriteRegister_wire;
 
 
+//**********************		     WIRES		********************************************/
 wire [31:0] Instruction_wire;
+wire Jr_signal;
+wire Jal_signal;
+wire Jump_signal;
+wire RegDst_signal;
+wire BranchNE_signal;
+wire BranchEQ_signal;
+wire MemWrite_signal;
+wire MemToReg_signal;
+wire ALUSrc_signal;
+wire RegWrite_signal;
+wire MemRead_signal;
+wire [3:0] ALUOp_wire;
+
+
+//**********************		    PC WIRES		************************************/
+wire [31:0] PC_wire;
+wire [31:0] PC4_wire;
+wire [31:0] NextPC_wire;
+wire [31:0] PCOrBranch_wire;//for jump mux output
+wire [31:0] BranchOrJump_wire;	//for branch mux output which connects directly to the PC register
+wire [31:0] PCOrJump_wire;
+wire BranchSel_wire; //for PC branch mux
+
+
+//**********************		    ALU	WIRES	********************************************/
+wire Zero_wire;	//is sub result = 0
+wire [3:0] ALUOperation_wire;
+wire [4:0]  Shamt_wire;
+wire [31:0] ALUResult_wire;
+
+//**********************		    MISC WIRES		********************************************/
+
+wire [31:0] BranchAddress_wire;
+wire [31:0] PC4PlusBranchAddr_result_wire;
+wire [4:0]  WriteRegister_wire;
+wire [4:0]  MUX_WriteRegister_output_wire;
+
+wire [31:0] DataOut_wire;
+wire [31:0] DataOutOrALUResult_wire;
+
 wire [31:0] ReadData1_wire;
 wire [31:0] ReadData2_wire;
+
 wire [31:0] InmmediateExtend_wire;
 wire [31:0] ReadData2OrInmmediate_wire;
-wire [31:0] ALUResult_wire;
-wire [4:0]  Shamt_wire;
-wire [31:0] MUX_PC_wire;
-wire [31:0] PC_wire;
-wire [31:0] PC_4_wire;
-wire [31:0] InmmediateExtendAnded_wire;
-wire [31:0] PCtoBranch_wire;
+wire [31:0] WriteDataOrReturnAddr_wire;
+
+
 integer ALUStatus;
 
 
-//******************************************************************/
-//******************************************************************/
-//******************************************************************/
-//******************************************************************/
-//******************************************************************/
+//*************************		MEMORY		*****************************************/
+
+DataMemory 
+RAM
+(
+	.WriteData(ReadData2_wire),//???????
+	.Address((ALUResult_wire-'h10010000)>>2),
+	.MemWrite(MemWrite_signal),
+	.MemRead(MemRead_signal),
+	.clk(clk),
+	
+	.ReadData(DataOut_wire)
+);
+
+
+
+//***************************		CONTROL	***************************************/
+
 Control
 ControlUnit
 (
 	.OP(Instruction_wire[31:26]),
-	.RegDst(RegDst_wire),
-	.BranchNE(BranchNE_wire),
-	.BranchEQ(BranchEQ_wire),
-	.ALUOp(ALUOp_wire),
-	.ALUSrc(ALUSrc_wire),
-	.RegWrite(RegWrite_wire)
+	.funct(Instruction_wire[5:0]),
+	
+	.Jr(Jr_signal),
+	.Jal(Jal_signal),
+	.Jump(Jump_signal),
+	.RegDst(RegDst_signal),
+	.BranchNE(BranchNE_signal),
+	.BranchEQ(BranchEQ_signal),
+	.MemWrite(MemWrite_signal),
+	.MemToReg(MemToReg_signal),
+	.MemRead(MemRead_signal),
+	.ALUSrc(ALUSrc_signal),
+	.RegWrite(RegWrite_signal),
+	.ALUOp(ALUOp_wire)
+
 );
 
 
+//**********************		    BRANCH		********************************************/
 
-
-
-
-ProgramMemory
-#(
-	.MEMORY_DEPTH(MEMORY_DEPTH)
-)
-ROMProgramMemory
+ANDGate
+NotZeroAndBNE
 (
-	.Address(PC_wire),
-	.Instruction(Instruction_wire)
+	.A(BranchNE_signal),
+	.B(~Zero_wire),
+	.C(NotZeroANDBrachNE)
 );
+ANDGate
+ZeroANDBEQ
+(
+	.A(BranchEQ_signal),
+	.B(Zero_wire),
+	.C(ZeroANDBrachEQ)
+);
+assign BranchSel_wire = (NotZeroANDBrachNE || ZeroANDBrachEQ);
+
+
+ShiftLeft2 
+ShiftLeft2ForBranchAddr
+(   
+	.DataInput(InmmediateExtend_wire),
+   .DataOutput(BranchAddress_wire)
+
+);
+
+Adder32bits
+#
+(
+	.NBits(32)
+)
+AdderForBranchAddress
+(
+	.Data0(PC4_wire),
+	.Data1(BranchAddress_wire),
+	
+	.Result(PC4PlusBranchAddr_result_wire)
+);
+
+
+Multiplexer2to1
+#(
+	.NBits(32)
+)
+MUX_ForPCAndBranch
+(
+	.Selector(BranchSel_wire),
+	.MUX_Data0(PC4_wire),
+	.MUX_Data1(PC4PlusBranchAddr_result_wire),
+	
+	.MUX_Output(PCOrBranch_wire)
+
+);
+
+
+//**********************		    JUMP		********************************************/
+
+
+Multiplexer2to1
+#(
+	.NBits(32)
+)
+MUX_ForPCAndJump
+(
+	.Selector(Jump_signal),
+	.MUX_Data0(PCOrBranch_wire),
+	.MUX_Data1({PC4_wire[31:28], Instruction_wire[27:0]<<2}), //the upper 4 bits of currPC+4 (31:28) , immediate field of the j instr, 00
+	
+	.MUX_Output(PCOrJump_wire)
+);
+
+
+Multiplexer2to1
+#(
+	.NBits(32)
+)
+MUX_ForPCAndJr
+(
+	.Selector(Jr_signal),
+	.MUX_Data0(PCOrJump_wire),
+	.MUX_Data1(ReadData1_wire), 
+	
+	.MUX_Output(NextPC_wire)
+);
+
+
 
 PC_Register
 #(
@@ -98,10 +217,9 @@ Program_Counter
 (
 	.clk(clk),
 	.reset(reset),
-	.NewPC(PC_4_wire),
-	
-	
-	.PCValue(PC_wire)
+	.PCValue(PC_wire),
+
+	.NewPC(NextPC_wire)	
 );
 
 
@@ -111,22 +229,30 @@ PC_Puls_4
 	.Data0(PC_wire),
 	.Data1(4),
 	
-	.Result(PC_4_wire)
+	.Result(PC4_wire)
+);	
+	
+	
+ProgramMemory
+#(
+	.MEMORY_DEPTH(MEMORY_DEPTH)
+)
+ROMProgramMemory
+(
+	.Address(PC_wire-'h00400000),
+	.Instruction(Instruction_wire)
 );
+	
 
+//****************************		R & I TYPE INSTRUCTIONS		**************************************/
 
-//******************************************************************/
-//******************************************************************/
-//******************************************************************/
-//******************************************************************/
-//******************************************************************/
 Multiplexer2to1
 #(
 	.NBits(5)
 )
 MUX_ForRTypeAndIType
 (
-	.Selector(RegDst_wire),
+	.Selector(RegDst_signal),
 	.MUX_Data0(Instruction_wire[20:16]),
 	.MUX_Data1(Instruction_wire[15:11]),
 	
@@ -135,29 +261,13 @@ MUX_ForRTypeAndIType
 );
 
 
-
-RegisterFile
-Register_File
-(
-	.clk(clk),
-	.reset(reset),
-	.RegWrite(RegWrite_wire),
-	.WriteRegister(WriteRegister_wire),
-	.ReadRegister1(Instruction_wire[25:21]),
-	.ReadRegister2(Instruction_wire[20:16]),
-	.WriteData(ALUResult_wire),
-	.ReadData1(ReadData1_wire),
-	.ReadData2(ReadData2_wire)
-
-);
-
 SignExtend
 SignExtendForConstants
 (   
 	.DataInput(Instruction_wire[15:0]),
+	
    .SignExtendOutput(InmmediateExtend_wire)
 );
-
 
 
 Multiplexer2to1
@@ -166,7 +276,7 @@ Multiplexer2to1
 )
 MUX_ForReadDataAndInmediate
 (
-	.Selector(ALUSrc_wire),
+	.Selector(ALUSrc_signal),
 	.MUX_Data0(ReadData2_wire),
 	.MUX_Data1(InmmediateExtend_wire),
 	
@@ -175,15 +285,16 @@ MUX_ForReadDataAndInmediate
 );
 
 
+
+//**********************		    ALU		********************************************/
+
 ALUControl
 ArithmeticLogicUnitControl
 (
 	.ALUOp(ALUOp_wire),
 	.ALUFunction(Instruction_wire[5:0]),
 	.ALUOperation(ALUOperation_wire)
-
 );
-
 
 
 ALU
@@ -193,11 +304,71 @@ Arithmetic_Logic_Unit
 	.A(ReadData1_wire),
 	.B(ReadData2OrInmmediate_wire),
 	.Shamt(Instruction_wire[10:6]),
+	
 	.Zero(Zero_wire),
 	.ALUResult(ALUResult_wire)
 );
-
 assign ALUResultOut = ALUResult_wire;
+
+//**********************		  MISC MUXS		********************************************/
+
+Multiplexer2to1
+
+#(
+ .NBits(32)
+)
+MUX_DataOutAndALUResult
+(
+  .Selector(MemToReg_signal), 
+  .MUX_Data0(ALUResult_wire),
+  .MUX_Data1(DataOut_wire),
+  .MUX_Output(DataOutOrALUResult_wire)
+
+);
+
+
+Multiplexer2to1
+#(
+  .NBits(32)
+)
+MUX_WriteDataAndReturnAddr
+(
+  .Selector(Jal_signal), 
+  .MUX_Data0(DataOutOrALUResult_wire),
+  .MUX_Data1(PC4_wire),
+
+  .MUX_Output(WriteDataOrReturnAddr_wire)
+);
+
+Multiplexer2to1
+#(
+  .NBits(5)
+)
+MUX_WriteRegister	//write in reg 31 or in other reg
+(
+  .Selector(Jal_signal), 
+  .MUX_Data0(WriteRegister_wire),
+  .MUX_Data1(31),	//the register $ra(register 31)
+
+  .MUX_Output(MUX_WriteRegister_output_wire)
+);
+
+RegisterFile
+Register_File
+(
+	.clk(clk),
+	.reset(reset),
+	.RegWrite(RegWrite_signal),
+	.WriteRegister(MUX_WriteRegister_output_wire),
+	.ReadRegister1(Instruction_wire[25:21]),
+	.ReadRegister2(Instruction_wire[20:16]),
+	.WriteData(WriteDataOrReturnAddr_wire),	//before just DataOutOrALUResult_wire
+	
+	.ReadData1(ReadData1_wire),
+	.ReadData2(ReadData2_wire)
+
+);
+
 
 
 endmodule
